@@ -1,0 +1,52 @@
+{
+  "Actions": [
+    {
+      "UUID": "com.igorcretu.streamdock.sonar.game",
+      "Icon": "static/img/App-logo.png",
+      "States": [
+        {
+          "Image": "static/img/App-logo.png"
+        }
+      ],
+      "Settings": {},
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad"],
+      "Name": "Sonar Game Device",
+      "Tooltip": "Shows current SteelSeries Sonar game output device. Press to cycle.",
+      "PropertyInspectorPath": "propertyInspector/sonar/index.html"
+    },
+    {
+      "UUID": "com.igorcretu.streamdock.sonar.volume",
+      "Icon": "static/img/App-logo.png",
+      "States": [
+        {
+          "Image": "static/img/App-logo.png"
+        }
+      ],
+      "Settings": {},
+      "UserTitleEnabled": false,
+      "SupportedInMultiActions": false,
+      "Controllers": ["Keypad", "Knob"],
+      "Name": "Sonar Volume",
+      "Tooltip": "Rotate to adjust Sonar channel volume. Press to toggle mute.",
+      "PropertyInspectorPath": "propertyInspector/volume/index.html"
+    }
+  ],
+  "Version": "1.1.0",
+  "Name": "SteelSeries Sonar",
+  "Icon": "static/img/App-logo.png",
+  "CategoryIcon": "static/img/App-logo.png",
+  "Category": "SteelSeries Sonar",
+  "Description": "Control SteelSeries Sonar audio — cycle output devices and adjust channel volumes with dials.",
+  "CodePath": "plugin/index.html",
+  "SDKVersion": 1,
+  "Author": "Igor Cretu",
+  "URL": "",
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" }
+  ],
+  "ApplicationsToMonitor": {
+    "windows": ["SteelSeriesGG.exe"]
+  }
+}

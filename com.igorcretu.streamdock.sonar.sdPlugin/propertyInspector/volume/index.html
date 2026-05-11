@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Sonar Volume</title>
+  <link rel="stylesheet" href="../../static/css/sdpi.css" />
+  <style>
+    .ch-buttons { display:flex; flex-wrap:wrap; gap:6px; padding:4px 0 8px; }
+    .ch-btn {
+      background:#1e293b; color:#94a3b8; border:1px solid #334155;
+      padding:5px 10px; border-radius:4px; cursor:pointer; font-size:12px;
+    }
+    .ch-btn.active { background:#2563eb; color:#fff; border-color:#1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="sdpi-wrapper">
+    <div class="sdpi-item">
+      <div class="sdpi-item-label">Channels</div>
+      <div class="sdpi-item-value">
+        <div class="ch-buttons">
+          <button class="ch-btn" data-ch="master">Master</button>
+          <button class="ch-btn" data-ch="game">Game</button>
+          <button class="ch-btn" data-ch="chatRender">Chat</button>
+          <button class="ch-btn" data-ch="media">Media</button>
+          <button class="ch-btn" data-ch="aux">Aux</button>
+          <button class="ch-btn" data-ch="chatCapture">Mic</button>
+        </div>
+      </div>
+    </div>
+    <div class="sdpi-item">
+      <div class="sdpi-item-label">Step (%)</div>
+      <div class="sdpi-item-value">
+        <input type="number" id="step" min="1" max="20" value="3" />
+      </div>
+    </div>
+    <div class="sdpi-item" style="padding:4px 12px;font-size:11px;color:#555;">
+      Click to toggle channels. Rotate = volume, press = mute/unmute.
+    </div>
+  </div>
+  <script src="../../static/utils/common.js"></script>
+  <script src="../../static/action.js"></script>
+  <script src="index.js"></script>
+</body>
+</html>
