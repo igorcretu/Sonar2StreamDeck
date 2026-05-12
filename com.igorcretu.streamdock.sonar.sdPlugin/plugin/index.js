@@ -17,42 +17,13 @@ const toRedirCh = ch => REDIR_CH[ch] || ch;
 // ── Shared Sonar URL cache ─────────────────────────────────────────────
 
 let _sonarBaseUrl = null;
-let _sonarLastError = null;
 let _ggLastLaunchTime = 0;
-let _debugStatus = '';
 
 function tryLaunchSteelSeriesGG() {
     const now = Date.now();
     if (now - _ggLastLaunchTime < 30000) return;
     _ggLastLaunchTime = now;
-    _debugStatus = 'launching...';
-    try {
-        const fs = require('fs');
-        const candidates = [
-            'C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
-            'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
-        ];
-        const exe = candidates.find(p => fs.existsSync(p));
-        if (!exe) { _debugStatus = 'exe not found'; return; }
-
-        // exe requires elevation — use shell.openPath (triggers UAC) or PowerShell RunAs
-        try {
-            const { shell } = require('electron');
-            shell.openPath(exe);
-            _debugStatus = 'launched (shell)';
-            return;
-        } catch (e1) { _debugStatus = 'shell err: ' + e1.message.slice(0, 20); }
-
-        // Fallback: PowerShell Start-Process -Verb RunAs (shows UAC prompt)
-        try {
-            const { spawn } = require('child_process');
-            const ps = `Start-Process -FilePath '${exe}' -ArgumentList '-dataPath=C:\\ProgramData\\SteelSeries\\GG -dbEnv=production' -Verb RunAs`;
-            spawn('powershell.exe', ['-WindowStyle', 'Hidden', '-Command', ps],
-                  { detached: true, stdio: 'ignore' }).unref();
-            _debugStatus = 'launched (PS RunAs)';
-        } catch (e2) { _debugStatus = 'PS err: ' + e2.message.slice(0, 20); }
-
-    } catch (e) { _debugStatus = 'err: ' + e.message.slice(0, 20); }
+    $websocket.openUrl('file:///C:/Program%20Files/SteelSeries/GG/SteelSeriesGGEZ.exe');
 }
 
 async function getSonarBaseUrl() {
@@ -83,9 +54,7 @@ async function _discoverSonarUrl() {
                 req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
             });
             if (address) { _sonarBaseUrl = address.replace(/\/$/, ''); return _sonarBaseUrl; }
-        } catch (e) {
-            _sonarLastError = 'req:' + e.message.slice(0, 30);
-        }
+        } catch (e) { /* require path not available in renderer */ }
     }
 
     try {
@@ -94,7 +63,7 @@ async function _discoverSonarUrl() {
             const address = (await resp.json())?.subApps?.sonar?.metadata?.webServerAddress;
             if (address) { _sonarBaseUrl = address.replace(/\/$/, ''); return _sonarBaseUrl; }
         }
-    } catch (e) { _sonarLastError = 'https:' + e.message.slice(0, 30); }
+    } catch (e) { /* GG not running */ }
 
     return null;
 }
@@ -151,11 +120,6 @@ async function makeDeviceImage(channelLabel, deviceName, isOff, iconDataUrl) {
         ctx.fillText('Sonar', 72, 55);
         ctx.font = 'bold 24px sans-serif';
         ctx.fillText('Off', 72, 88);
-        if (_debugStatus) {
-            ctx.fillStyle = '#60a5fa';
-            ctx.font = '11px sans-serif';
-            ctx.fillText(_debugStatus, 72, 118);
-        }
         return canvas.toDataURL();
     }
 
@@ -283,7 +247,6 @@ const $plugin = {
 
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
-                tryLaunchSteelSeriesGG();
                 sendImage(context, await makeDeviceImage(label, '', true));
                 $websocket.setTitle(context, '');
                 return;
@@ -315,7 +278,7 @@ const $plugin = {
 
         async cycleDevice(context) {
             const baseUrl = await getSonarBaseUrl();
-            if (!baseUrl) return;
+            if (!baseUrl) { tryLaunchSteelSeriesGG(); return; }
 
             const settings = this.data[context] || {};
             const channels = settings.channels?.length ? settings.channels : ['game'];
@@ -407,7 +370,7 @@ const $plugin = {
             const settings = this.data[context] || {};
             const channels = this._getChannels(settings);
             const baseUrl = await getSonarBaseUrl();
-            if (!baseUrl) return;
+            if (!baseUrl) { tryLaunchSteelSeriesGG(); return; }
 
             const currentVol = this._state[context]?.volume ?? 0.5;
             const newMuted = !(this._state[context]?.muted ?? false);
@@ -433,7 +396,6 @@ const $plugin = {
             const label = this._getLabel(settings);
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
-                tryLaunchSteelSeriesGG();
                 sendImage(context, makeVolumeImage(label, 0, false));
                 $websocket.setTitle(context, '');
                 return;
