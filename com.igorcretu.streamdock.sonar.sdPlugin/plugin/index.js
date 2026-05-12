@@ -19,57 +19,40 @@ const toRedirCh = ch => REDIR_CH[ch] || ch;
 let _sonarBaseUrl = null;
 let _sonarLastError = null;
 let _ggLastLaunchTime = 0;
+let _debugStatus = '';
 
 function tryLaunchSteelSeriesGG() {
     const now = Date.now();
     if (now - _ggLastLaunchTime < 30000) return;
     _ggLastLaunchTime = now;
-
-    const LOG = 'C:\\Users\\Public\\sonar_plugin_debug.txt';
-    const log = msg => { try { require('fs').appendFileSync(LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch(_){} };
-
-    log('tryLaunchSteelSeriesGG called');
+    _debugStatus = 'launching...';
     try {
         const fs = require('fs');
-        const path = require('path');
-        const ggArgs = ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production'];
         const candidates = [
             'C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
             'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
         ];
         const exe = candidates.find(p => fs.existsSync(p));
-        if (!exe) { log('exe not found'); return; }
-        const cwd = path.dirname(exe);
-        log('exe found: ' + exe);
+        if (!exe) { _debugStatus = 'exe not found'; return; }
 
-        // Strategy 1: electron.shell + bat file
+        // exe requires elevation — use shell.openPath (triggers UAC) or PowerShell RunAs
         try {
             const { shell } = require('electron');
-            const bat = require('os').tmpdir() + '\\start_gg.bat';
-            fs.writeFileSync(bat, `@echo off\nstart "" "${exe}" ${ggArgs.join(' ')}\n`);
-            shell.openPath(bat);
-            log('Strategy 1 (electron.shell) succeeded');
+            shell.openPath(exe);
+            _debugStatus = 'launched (shell)';
             return;
-        } catch (e1) { log('Strategy 1 failed: ' + e1.message); }
+        } catch (e1) { _debugStatus = 'shell err: ' + e1.message.slice(0, 20); }
 
-        // Strategy 2: spawn
+        // Fallback: PowerShell Start-Process -Verb RunAs (shows UAC prompt)
         try {
             const { spawn } = require('child_process');
-            const child = spawn(exe, ggArgs, { detached: true, stdio: 'ignore', cwd });
-            child.unref();
-            log('Strategy 2 (spawn) succeeded');
-            return;
-        } catch (e2) { log('Strategy 2 failed: ' + e2.message); }
+            const ps = `Start-Process -FilePath '${exe}' -ArgumentList '-dataPath=C:\\ProgramData\\SteelSeries\\GG -dbEnv=production' -Verb RunAs`;
+            spawn('powershell.exe', ['-WindowStyle', 'Hidden', '-Command', ps],
+                  { detached: true, stdio: 'ignore' }).unref();
+            _debugStatus = 'launched (PS RunAs)';
+        } catch (e2) { _debugStatus = 'PS err: ' + e2.message.slice(0, 20); }
 
-        // Strategy 3: cmd /c start
-        try {
-            const { exec } = require('child_process');
-            exec(`cmd /c start "" "${exe}" ${ggArgs.join(' ')}`, { cwd },
-                (err) => log('Strategy 3 cb: ' + (err ? err.message : 'ok')));
-            log('Strategy 3 (cmd start) fired');
-        } catch (e3) { log('Strategy 3 failed: ' + e3.message); }
-
-    } catch (e) { log('outer error: ' + e.message); }
+    } catch (e) { _debugStatus = 'err: ' + e.message.slice(0, 20); }
 }
 
 async function getSonarBaseUrl() {
@@ -165,9 +148,14 @@ async function makeDeviceImage(channelLabel, deviceName, isOff, iconDataUrl) {
     if (isOff) {
         ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 28px sans-serif';
-        ctx.fillText('Sonar', 72, 68);
+        ctx.fillText('Sonar', 72, 55);
         ctx.font = 'bold 24px sans-serif';
-        ctx.fillText('Off', 72, 102);
+        ctx.fillText('Off', 72, 88);
+        if (_debugStatus) {
+            ctx.fillStyle = '#60a5fa';
+            ctx.font = '11px sans-serif';
+            ctx.fillText(_debugStatus, 72, 118);
+        }
         return canvas.toDataURL();
     }
 
@@ -276,7 +264,7 @@ const $plugin = {
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) return;
             try {
-                const resp = await fetch(`${baseUrl}/audioDevices`);
+                const resp = await sonarRequest(`${baseUrl}/audioDevices`);
                 const devices = await resp.json();
                 const outputs = devices
                     .filter(d => d.dataFlow === 'render' && !d.isVad)
@@ -302,8 +290,8 @@ const $plugin = {
             }
             try {
                 const [devResp, redirResp] = await Promise.all([
-                    fetch(`${baseUrl}/audioDevices`),
-                    fetch(`${baseUrl}/classicRedirections`)
+                    sonarRequest(`${baseUrl}/audioDevices`),
+                    sonarRequest(`${baseUrl}/classicRedirections`),
                 ]);
                 if (!devResp.ok || !redirResp.ok) throw new Error('bad response');
 
@@ -319,9 +307,7 @@ const $plugin = {
                 sendImage(context, await makeDeviceImage(label, shorten(name), false, iconDataUrl));
                 $websocket.setTitle(context, '');
             } catch (e) {
-                if (e.message?.includes('ECONNREFUSED') || e.message?.includes('fetch')) {
-                    _sonarBaseUrl = null;
-                }
+                _sonarBaseUrl = null; // always re-discover on any failure
                 sendImage(context, await makeDeviceImage(label, '', true));
                 $websocket.setTitle(context, '');
             }
