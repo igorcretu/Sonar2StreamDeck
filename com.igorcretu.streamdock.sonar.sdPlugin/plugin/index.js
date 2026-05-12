@@ -26,14 +26,18 @@ function tryLaunchSteelSeriesGG() {
     _ggLastLaunchTime = now;
     try {
         const fs = require('fs');
-        const { exec } = require('child_process');
+        const { spawn } = require('child_process');
         const candidates = [
-            'C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGG.exe',
-            'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGG.exe',
+            ['C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
+             ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production']],
+            ['C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
+             ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production']],
+            ['C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGG.exe', []],
         ];
-        for (const p of candidates) {
+        for (const [p, args] of candidates) {
             if (fs.existsSync(p)) {
-                exec(`"${p}"`);
+                const child = spawn(p, args, { detached: true, stdio: 'ignore' });
+                child.unref();
                 console.log('[Sonar] Launched SteelSeries GG from', p);
                 return;
             }
