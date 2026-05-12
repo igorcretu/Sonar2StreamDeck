@@ -18,6 +18,31 @@ const toRedirCh = ch => REDIR_CH[ch] || ch;
 
 let _sonarBaseUrl = null;
 let _sonarLastError = null;
+let _ggLastLaunchTime = 0;
+
+function tryLaunchSteelSeriesGG() {
+    const now = Date.now();
+    if (now - _ggLastLaunchTime < 30000) return; // 30 s cooldown
+    _ggLastLaunchTime = now;
+    try {
+        const fs = require('fs');
+        const { exec } = require('child_process');
+        const candidates = [
+            'C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGG.exe',
+            'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGG.exe',
+        ];
+        for (const p of candidates) {
+            if (fs.existsSync(p)) {
+                exec(`"${p}"`);
+                console.log('[Sonar] Launched SteelSeries GG from', p);
+                return;
+            }
+        }
+        console.warn('[Sonar] SteelSeries GG not found at standard paths');
+    } catch (e) {
+        console.error('[Sonar] Launch error:', e.message);
+    }
+}
 
 async function getSonarBaseUrl() {
     if (_sonarBaseUrl) return _sonarBaseUrl;
@@ -251,6 +276,7 @@ const $plugin = {
 
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
+                tryLaunchSteelSeriesGG();
                 sendImage(context, await makeDeviceImage(label, '', true));
                 $websocket.setTitle(context, '');
                 return;
@@ -402,6 +428,7 @@ const $plugin = {
             const label = this._getLabel(settings);
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
+                tryLaunchSteelSeriesGG();
                 sendImage(context, makeVolumeImage(label, 0, false));
                 $websocket.setTitle(context, '');
                 return;
