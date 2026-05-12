@@ -22,8 +22,13 @@ let _ggLastLaunchTime = 0;
 
 function tryLaunchSteelSeriesGG() {
     const now = Date.now();
-    if (now - _ggLastLaunchTime < 30000) return; // 30 s cooldown
+    if (now - _ggLastLaunchTime < 30000) return;
     _ggLastLaunchTime = now;
+
+    const LOG = 'C:\\Users\\Public\\sonar_plugin_debug.txt';
+    const log = msg => { try { require('fs').appendFileSync(LOG, new Date().toISOString() + ' ' + msg + '\n'); } catch(_){} };
+
+    log('tryLaunchSteelSeriesGG called');
     try {
         const fs = require('fs');
         const path = require('path');
@@ -33,43 +38,47 @@ function tryLaunchSteelSeriesGG() {
             'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
         ];
         const exe = candidates.find(p => fs.existsSync(p));
-        if (!exe) { console.warn('[Sonar] SteelSeries GG not found'); return; }
+        if (!exe) { log('exe not found'); return; }
         const cwd = path.dirname(exe);
+        log('exe found: ' + exe);
 
-        // Strategy 1: electron.shell (available in Electron renderer)
+        // Strategy 1: electron.shell + bat file
         try {
             const { shell } = require('electron');
-            // openPath doesn't support args, so write a .bat and open that
             const bat = require('os').tmpdir() + '\\start_gg.bat';
             fs.writeFileSync(bat, `@echo off\nstart "" "${exe}" ${ggArgs.join(' ')}\n`);
             shell.openPath(bat);
-            console.log('[Sonar] Launched via electron.shell + bat');
+            log('Strategy 1 (electron.shell) succeeded');
             return;
-        } catch (e1) { console.warn('[Sonar] electron.shell failed:', e1.message); }
+        } catch (e1) { log('Strategy 1 failed: ' + e1.message); }
 
-        // Strategy 2: spawn with cwd
+        // Strategy 2: spawn
         try {
             const { spawn } = require('child_process');
             const child = spawn(exe, ggArgs, { detached: true, stdio: 'ignore', cwd });
             child.unref();
-            console.log('[Sonar] Launched via spawn');
+            log('Strategy 2 (spawn) succeeded');
             return;
-        } catch (e2) { console.warn('[Sonar] spawn failed:', e2.message); }
+        } catch (e2) { log('Strategy 2 failed: ' + e2.message); }
 
         // Strategy 3: cmd /c start
         try {
             const { exec } = require('child_process');
-            exec(`cmd /c start "" "${exe}" ${ggArgs.join(' ')}`, { cwd });
-            console.log('[Sonar] Launched via cmd start');
-        } catch (e3) { console.error('[Sonar] All launch strategies failed:', e3.message); }
+            exec(`cmd /c start "" "${exe}" ${ggArgs.join(' ')}`, { cwd },
+                (err) => log('Strategy 3 cb: ' + (err ? err.message : 'ok')));
+            log('Strategy 3 (cmd start) fired');
+        } catch (e3) { log('Strategy 3 failed: ' + e3.message); }
 
-    } catch (e) {
-        console.error('[Sonar] Launch error:', e.message);
-    }
+    } catch (e) { log('outer error: ' + e.message); }
 }
 
 async function getSonarBaseUrl() {
     if (_sonarBaseUrl) return _sonarBaseUrl;
+    // Hard cap: never block longer than 5 s total
+    return Promise.race([_discoverSonarUrl(), new Promise(r => setTimeout(() => r(null), 5000))]);
+}
+
+async function _discoverSonarUrl() {
     let ggAddr = '127.0.0.1:6327';
 
     if (typeof require !== 'undefined') {
@@ -97,25 +106,12 @@ async function getSonarBaseUrl() {
     }
 
     try {
-        const resp = await fetch(`https://${ggAddr}/subApps`);
+        const resp = await fetch(`https://${ggAddr}/subApps`, { signal: AbortSignal.timeout(3000) });
         if (resp.ok) {
             const address = (await resp.json())?.subApps?.sonar?.metadata?.webServerAddress;
             if (address) { _sonarBaseUrl = address.replace(/\/$/, ''); return _sonarBaseUrl; }
         }
     } catch (e) { _sonarLastError = 'https:' + e.message.slice(0, 30); }
-
-    try {
-        const fileResp = await fetch('file:///C:/ProgramData/SteelSeries/GG/coreProps.json');
-        if (fileResp.ok) {
-            const props = await fileResp.json();
-            ggAddr = props.ggEncryptedAddress || ggAddr;
-            const resp2 = await fetch(`https://${ggAddr}/subApps`);
-            if (resp2.ok) {
-                const address = (await resp2.json())?.subApps?.sonar?.metadata?.webServerAddress;
-                if (address) { _sonarBaseUrl = address.replace(/\/$/, ''); return _sonarBaseUrl; }
-            }
-        }
-    } catch (e) { _sonarLastError = 'file:' + e.message.slice(0, 30); }
 
     return null;
 }
