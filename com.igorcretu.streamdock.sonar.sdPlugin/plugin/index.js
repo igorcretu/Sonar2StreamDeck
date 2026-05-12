@@ -26,23 +26,43 @@ function tryLaunchSteelSeriesGG() {
     _ggLastLaunchTime = now;
     try {
         const fs = require('fs');
-        const { spawn } = require('child_process');
+        const path = require('path');
+        const ggArgs = ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production'];
         const candidates = [
-            ['C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
-             ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production']],
-            ['C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
-             ['-dataPath=C:\\ProgramData\\SteelSeries\\GG', '-dbEnv=production']],
-            ['C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGG.exe', []],
+            'C:\\Program Files\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
+            'C:\\Program Files (x86)\\SteelSeries\\GG\\SteelSeriesGGEZ.exe',
         ];
-        for (const [p, args] of candidates) {
-            if (fs.existsSync(p)) {
-                const child = spawn(p, args, { detached: true, stdio: 'ignore' });
-                child.unref();
-                console.log('[Sonar] Launched SteelSeries GG from', p);
-                return;
-            }
-        }
-        console.warn('[Sonar] SteelSeries GG not found at standard paths');
+        const exe = candidates.find(p => fs.existsSync(p));
+        if (!exe) { console.warn('[Sonar] SteelSeries GG not found'); return; }
+        const cwd = path.dirname(exe);
+
+        // Strategy 1: electron.shell (available in Electron renderer)
+        try {
+            const { shell } = require('electron');
+            // openPath doesn't support args, so write a .bat and open that
+            const bat = require('os').tmpdir() + '\\start_gg.bat';
+            fs.writeFileSync(bat, `@echo off\nstart "" "${exe}" ${ggArgs.join(' ')}\n`);
+            shell.openPath(bat);
+            console.log('[Sonar] Launched via electron.shell + bat');
+            return;
+        } catch (e1) { console.warn('[Sonar] electron.shell failed:', e1.message); }
+
+        // Strategy 2: spawn with cwd
+        try {
+            const { spawn } = require('child_process');
+            const child = spawn(exe, ggArgs, { detached: true, stdio: 'ignore', cwd });
+            child.unref();
+            console.log('[Sonar] Launched via spawn');
+            return;
+        } catch (e2) { console.warn('[Sonar] spawn failed:', e2.message); }
+
+        // Strategy 3: cmd /c start
+        try {
+            const { exec } = require('child_process');
+            exec(`cmd /c start "" "${exe}" ${ggArgs.join(' ')}`, { cwd });
+            console.log('[Sonar] Launched via cmd start');
+        } catch (e3) { console.error('[Sonar] All launch strategies failed:', e3.message); }
+
     } catch (e) {
         console.error('[Sonar] Launch error:', e.message);
     }
