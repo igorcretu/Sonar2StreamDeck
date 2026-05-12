@@ -143,11 +143,10 @@ async function makeDeviceImage(channelLabel, deviceName, isOff, iconDataUrl) {
     ctx.textAlign = 'center';
 
     if (isOff) {
-        ctx.fillStyle = '#64748b';
+        ctx.fillStyle = '#ffffff';
         ctx.font = 'bold 28px sans-serif';
         ctx.fillText('Sonar', 72, 68);
         ctx.font = 'bold 24px sans-serif';
-        ctx.fillStyle = '#475569';
         ctx.fillText('Off', 72, 102);
         return canvas.toDataURL();
     }
