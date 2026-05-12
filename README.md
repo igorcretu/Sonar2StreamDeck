@@ -34,7 +34,7 @@ Rotate the dial to adjust volume, press to mute/unmute.
 ## Requirements
 
 - [SteelSeries GG](https://steelseries.com/gg) with **Sonar** enabled and running
-- [HotSpot StreamDock](https://www.hotspottek.com/) software
+- [Ajazz/Mirabox StreamDock](https://www.hotspottek.com/) software
 
 ---
 
