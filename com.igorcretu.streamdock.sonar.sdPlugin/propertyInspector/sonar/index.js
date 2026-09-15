@@ -50,10 +50,12 @@ function renderDeviceList(devices) {
     const list = document.getElementById('deviceIconList');
     list.innerHTML = '';
     const icons = _currentSettings.deviceIcons || {};
+    const excluded = _currentSettings.excludedDeviceIds || [];
 
     devices.forEach(dev => {
         const row = document.createElement('div');
         row.className = 'device-row';
+        row.classList.toggle('excluded', excluded.includes(dev.id));
 
         const thumb = document.createElement('div');
         thumb.className = 'device-thumb';
@@ -121,6 +123,24 @@ function renderDeviceList(devices) {
             saveSettings();
         });
 
+        const excludeToggle = document.createElement('span');
+        excludeToggle.className = 'device-exclude-toggle';
+        const setExcludeLabel = () => {
+            const isExcluded = (_currentSettings.excludedDeviceIds || []).includes(dev.id);
+            row.classList.toggle('excluded', isExcluded);
+            excludeToggle.textContent = isExcluded ? 'Excluded' : 'Exclude';
+            excludeToggle.classList.toggle('is-excluded', isExcluded);
+        };
+        setExcludeLabel();
+        excludeToggle.addEventListener('click', () => {
+            if (!_currentSettings.excludedDeviceIds) _currentSettings.excludedDeviceIds = [];
+            const ids = _currentSettings.excludedDeviceIds;
+            const idx = ids.indexOf(dev.id);
+            if (idx === -1) ids.push(dev.id); else ids.splice(idx, 1);
+            setExcludeLabel();
+            saveSettings();
+        });
+
         thumb.addEventListener('click', () => fileInput.click());
         changeLabel.addEventListener('click', () => fileInput.click());
 
@@ -128,6 +148,7 @@ function renderDeviceList(devices) {
         row.appendChild(name);
         row.appendChild(changeLabel);
         row.appendChild(resetLabel);
+        row.appendChild(excludeToggle);
         row.appendChild(fileInput);
         list.appendChild(row);
     });

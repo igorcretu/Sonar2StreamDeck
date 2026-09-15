@@ -14,6 +14,7 @@
 
     .device-row { display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid #1e293b; }
     .device-row:last-child { border-bottom:none; }
+    .device-row.excluded { opacity:0.45; }
     .device-thumb {
       width:40px; height:40px; flex-shrink:0;
       background:#111; border:1px solid #334155; overflow:hidden; cursor:pointer;
@@ -21,8 +22,13 @@
     }
     .device-thumb img { width:100%; height:100%; object-fit:cover; }
     .device-thumb .placeholder { font-size:18px; }
-    .device-name { flex:1; color:#cbd5e1; font-size:12px; }
+    .device-name { flex:1; color:#cbd5e1; font-size:12px; min-width:0; overflow-wrap:anywhere; }
     .device-change { font-size:10px; color:#60a5fa; cursor:pointer; white-space:nowrap; }
+    .device-exclude-toggle {
+      font-size:10px; color:#64748b; cursor:pointer; white-space:nowrap;
+      border:1px solid #334155; border-radius:3px; padding:2px 6px;
+    }
+    .device-exclude-toggle.is-excluded { color:#f87171; border-color:#7f1d1d; }
     #deviceIconList { min-height:20px; }
     #loadingMsg { color:#475569; font-size:11px; padding:4px 0; }
   </style>

@@ -1,4 +1,4 @@
-const POLL_MS = 5000;
+const POLL_MS = 1000;
 const CORE_PROPS_PATH = 'C:\\ProgramData\\SteelSeries\\GG\\coreProps.json';
 
 const CHANNEL_LABELS = {
@@ -99,7 +99,73 @@ function sonarRequest(url, method) {
     });
 }
 
+// ── Toast notification helper ──────────────────────────────────────────
+// GG's native overlay is only triggered by authenticated WebSocket messages
+// from Sonar itself. As a fallback we use Windows toast notifications.
+function showToast(title, message) {
+    try {
+        const { execFile } = require('child_process');
+        const ps = `
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
+[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
+$template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
+$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)
+$nodes = $xml.GetElementsByTagName('text')
+$nodes.Item(0).AppendChild($xml.CreateTextNode('${title.replace(/'/g, '')}')) | Out-Null
+$nodes.Item(1).AppendChild($xml.CreateTextNode('${message.replace(/'/g, '')}')) | Out-Null
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('SteelSeries Sonar')
+$notifier.Show($toast)
+`;
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
+            { timeout: 5000 }, () => {});
+    } catch (e) { /* toast not critical */ }
+}
+
+// withOverlay: kept as a no-op wrapper so callers don't need updating.
+// The native GG overlay fires internally only for hardware shortcuts;
+// toast notifications above handle the user-facing feedback instead.
+async function withOverlay(_baseUrl, fn) {
+    return fn();
+}
+
 // ── Canvas helpers ─────────────────────────────────────────────────────
+
+const BG_SRC = 'icons/blank-bg.jpg';
+let _bgImage = null;
+
+function loadBg() {
+    if (_bgImage) return Promise.resolve(_bgImage);
+    return new Promise(resolve => {
+        const img = new Image();
+        img.onload = () => { _bgImage = img; resolve(img); };
+        img.onerror = () => resolve(null);
+        img.src = BG_SRC;
+    });
+}
+
+const CHANNEL_COLORS = {
+    master: '#94a3b8',
+    game: '#3b82f6',
+    chatRender: '#22c55e',
+    media: '#a855f7',
+    aux: '#f97316',
+    chatCapture: '#ec4899',
+};
+
+function rrect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.arcTo(x + w, y, x + w, y + r, r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+    ctx.lineTo(x + r, y + h);
+    ctx.arcTo(x, y + h, x, y + h - r, r);
+    ctx.lineTo(x, y + r);
+    ctx.arcTo(x, y, x + r, y, r);
+    ctx.closePath();
+}
 
 function sendImage(context, dataUrl) {
     $websocket.send(JSON.stringify({
@@ -108,25 +174,43 @@ function sendImage(context, dataUrl) {
     }));
 }
 
-async function makeDeviceImage(channelLabel, deviceName, isOff, iconDataUrl) {
+async function makeDeviceImage(channelKey, channelLabel, deviceName, isOff, iconDataUrl) {
     const canvas = document.createElement('canvas');
     canvas.width = 144; canvas.height = 144;
     const ctx = canvas.getContext('2d');
-    ctx.textAlign = 'center';
+
+    const bg = await loadBg();
+    if (bg) {
+        ctx.drawImage(bg, 0, 0, 144, 144);
+    } else {
+        ctx.fillStyle = '#0a0e1a';
+        ctx.fillRect(0, 0, 144, 144);
+    }
 
     if (isOff) {
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 28px sans-serif';
-        ctx.fillText('Sonar', 72, 55);
-        ctx.font = 'bold 24px sans-serif';
-        ctx.fillText('Off', 72, 88);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.font = 'bold 19px sans-serif';
+        ctx.fillText('SONAR', 72, 66);
+        ctx.fillStyle = '#ef4444';
+        ctx.font = '15px sans-serif';
+        ctx.fillText('offline', 72, 90);
         return canvas.toDataURL();
     }
 
+    // Custom icons are full-button images – draw at full size.
+    // Guessed built-in icons are small glyphs – center them.
     const src = iconDataUrl || guessDeviceIconPath(deviceName);
     await new Promise(resolve => {
         const img = new Image();
-        img.onload = () => { ctx.drawImage(img, 0, 0, 144, 144); resolve(); };
+        img.onload = () => {
+            if (iconDataUrl) {
+                ctx.drawImage(img, 0, 0, 144, 144);
+            } else {
+                ctx.drawImage(img, 20, 20, 104, 104);
+            }
+            resolve();
+        };
         img.onerror = resolve;
         img.src = src;
     });
@@ -134,38 +218,72 @@ async function makeDeviceImage(channelLabel, deviceName, isOff, iconDataUrl) {
     return canvas.toDataURL();
 }
 
-function makeVolumeImage(channelLabel, volumePct, muted) {
+async function makeVolumeImage(channelKey, channelLabel, volumePct, muted) {
     const canvas = document.createElement('canvas');
     canvas.width = 144; canvas.height = 144;
     const ctx = canvas.getContext('2d');
-    ctx.textAlign = 'center';
 
-    ctx.fillStyle = '#0f172a';
+    ctx.fillStyle = '#0a0e1a';
     ctx.fillRect(0, 0, 144, 144);
 
-    // Channel badge — full width strip at top
-    ctx.fillStyle = muted ? '#991b1b' : '#1d4ed8';
-    ctx.fillRect(0, 0, 144, 40);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 26px sans-serif';
-    ctx.fillText(channelLabel.toUpperCase(), 72, 30);
+    const color = muted ? '#ef4444' : (CHANNEL_COLORS[channelKey] || '#3b82f6');
 
-    if (muted) {
-        ctx.fillStyle = '#f87171';
-        ctx.font = 'bold 36px sans-serif';
-        ctx.fillText('MUTED', 72, 106);
-    } else {
-        // Volume bar
-        ctx.fillStyle = '#1e293b';
-        ctx.fillRect(10, 50, 124, 14);
-        ctx.fillStyle = volumePct > 85 ? '#f59e0b' : '#22c55e';
-        if (volumePct > 0) ctx.fillRect(10, 50, Math.round(124 * volumePct / 100), 14);
+    // Circular arc dial – 7 o'clock → 5 o'clock clockwise (300°)
+    const cx = 72, cy = 88, R = 46;
+    const START = 2 * Math.PI / 3;   // 7 o'clock in canvas coords
+    const SWEEP = 5 * Math.PI / 3;   // 300°
 
-        // Big percentage
-        ctx.fillStyle = '#f1f5f9';
-        ctx.font = 'bold 52px sans-serif';
-        ctx.fillText(`${volumePct}%`, 72, 118);
+    // Track
+    ctx.beginPath();
+    ctx.arc(cx, cy, R, START, START + SWEEP);
+    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
+    ctx.lineWidth = 9;
+    ctx.lineCap = 'round';
+    ctx.stroke();
+
+    // Glow + fill
+    const fillEnd = START + (Math.min(100, Math.max(0, volumePct)) / 100) * SWEEP;
+    const arcEnd = muted ? START + SWEEP : fillEnd;
+    if (volumePct > 0 || muted) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, START, arcEnd);
+        ctx.strokeStyle = color + '30';
+        ctx.lineWidth = 17;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.arc(cx, cy, R, START, arcEnd);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 9;
+        ctx.lineCap = 'round';
+        ctx.stroke();
     }
+
+    // Center text
+    ctx.textAlign = 'center';
+    if (muted) {
+        ctx.fillStyle = '#ef4444';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText('MUTED', cx, cy + 8);
+    } else {
+        ctx.fillStyle = '#ffffff';
+        ctx.font = `bold ${volumePct >= 100 ? '34' : '40'}px sans-serif`;
+        ctx.fillText(`${volumePct}`, cx, cy + 14);
+        ctx.fillStyle = 'rgba(255,255,255,0.5)';
+        ctx.font = 'bold 13px sans-serif';
+        ctx.fillText('%', cx, cy + 30);
+    }
+
+    // Channel label pill – top center
+    ctx.font = 'bold 19px sans-serif';
+    const lbl = channelLabel.toUpperCase();
+    const lw = ctx.measureText(lbl).width + 22;
+    ctx.fillStyle = color + '50';
+    rrect(ctx, 72 - lw / 2, 7, lw, 30, 7);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(lbl, 72, 28);
 
     return canvas.toDataURL();
 }
@@ -180,17 +298,13 @@ function guessDeviceIconPath(name) {
     return 'icons/speaker.png';
 }
 
-function shorten(name) {
+function cleanName(name) {
     const m = name.match(/\((.+)\)$/);
     if (m) name = m[1].trim();
     for (const noise of ['(R)', '(TM)', 'USB Audio Device', 'Digital Audio']) {
         name = name.replace(noise, '').trim();
     }
     name = name.replace(/^\d+-\s*/, '').trim();
-    if (name.length > 14) {
-        const words = name.split(' ');
-        name = words.length >= 2 ? words.slice(-2).join(' ') : name.slice(0, 13) + '...';
-    }
     return name;
 }
 
@@ -201,7 +315,7 @@ const $plugin = {
 
     // ── Game output device cycler ──────────────────────────────────────
     game: new Action({
-        default: { channels: ['game'] },
+        default: { channels: ['game'], excludedDeviceIds: [] },
         _state: {},
 
         async _willAppear({ context }) {
@@ -232,7 +346,7 @@ const $plugin = {
                 const devices = await resp.json();
                 const outputs = devices
                     .filter(d => d.dataFlow === 'render' && !d.isVad)
-                    .map(d => ({ id: d.id, name: shorten(d.friendlyName) }));
+                    .map(d => ({ id: d.id, name: cleanName(d.friendlyName) }));
                 $websocket.sendToPropertyInspector(action, context, { devices: outputs });
             } catch (e) {
                 console.error('[Sonar] sendToPlugin getDevices error:', e.message);
@@ -247,7 +361,7 @@ const $plugin = {
 
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
-                sendImage(context, await makeDeviceImage(label, '', true));
+                sendImage(context, await makeDeviceImage(primaryCh, label, '', true));
                 $websocket.setTitle(context, '');
                 return;
             }
@@ -261,17 +375,29 @@ const $plugin = {
                 const devices = await devResp.json();
                 const redirections = await redirResp.json();
                 const realOutputs = devices.filter(d => d.dataFlow === 'render' && !d.isVad);
+                const realCaptures = devices.filter(d => d.dataFlow === 'capture' && !d.isVad);
                 const currentId = redirections.find(r => r.id === toRedirCh(primaryCh))?.deviceId;
+                const currentMicId = redirections.find(r => r.id === 'mic')?.deviceId;
 
-                this._state[context] = { ...this._state[context], devices: realOutputs, currentDeviceId: currentId };
+                const excludedIds = settings.excludedDeviceIds || [];
+                const cycleOutputs = excludedIds.length
+                    ? realOutputs.filter(d => !excludedIds.includes(d.id))
+                    : realOutputs;
 
-                const name = devices.find(d => d.id === currentId)?.friendlyName || 'Unknown';
+                this._state[context] = {
+                    ...this._state[context],
+                    devices: cycleOutputs.length ? cycleOutputs : realOutputs,
+                    currentDeviceId: currentId,
+                    captureDevices: realCaptures,
+                    currentMicDeviceId: currentMicId,
+                };
+
                 const iconDataUrl = settings.deviceIcons?.[currentId];
-                sendImage(context, await makeDeviceImage(label, shorten(name), false, iconDataUrl));
+                sendImage(context, await makeDeviceImage(primaryCh, label, '', false, iconDataUrl));
                 $websocket.setTitle(context, '');
             } catch (e) {
                 _sonarBaseUrl = null; // always re-discover on any failure
-                sendImage(context, await makeDeviceImage(label, '', true));
+                sendImage(context, await makeDeviceImage(primaryCh, label, '', true));
                 $websocket.setTitle(context, '');
             }
         },
@@ -284,25 +410,31 @@ const $plugin = {
             const channels = settings.channels?.length ? settings.channels : ['game'];
             const primaryCh = channels[0];
 
-            let { devices, currentDeviceId } = this._state[context] || {};
+            let { devices, currentDeviceId, captureDevices, currentMicDeviceId } = this._state[context] || {};
             if (!devices?.length) { await this.refreshDisplay(context); return; }
 
             const idx = devices.findIndex(d => d.id === currentDeviceId);
             const next = devices[(idx + 1) % devices.length];
 
-            const results = await Promise.allSettled(channels.map(ch =>
-                sonarRequest(
-                    `${baseUrl}/classicRedirections/${toRedirCh(ch)}/deviceId/${next.id}`,
-                    'PUT'
-                )
-            ));
-            results.forEach((r, i) => {
-                if (r.status === 'rejected') console.error(`[Sonar] PUT ${channels[i]} threw:`, r.reason?.message);
-                else if (!r.value?.ok) console.error(`[Sonar] PUT ${channels[i]} failed: HTTP ${r.value?.status}`);
-            });
+            const puts = channels.map(ch =>
+                sonarRequest(`${baseUrl}/classicRedirections/${toRedirCh(ch)}/deviceId/${next.id}`, 'PUT')
+            );
+
+            // Also cycle microphone capture device in lockstep
+            let nextMic = null;
+            if (captureDevices?.length) {
+                const micIdx = captureDevices.findIndex(d => d.id === currentMicDeviceId);
+                nextMic = captureDevices[(micIdx + 1) % captureDevices.length];
+                puts.push(sonarRequest(`${baseUrl}/classicRedirections/mic/deviceId/${nextMic.id}`, 'PUT'));
+            }
+
+            const results = await withOverlay(baseUrl, () => Promise.allSettled(puts));
             const anyOk = results.some(r => r.status === 'fulfilled' && r.value?.ok);
             if (anyOk) {
                 this._state[context].currentDeviceId = next.id;
+                if (nextMic) this._state[context].currentMicDeviceId = nextMic.id;
+                const label = settings.label || primaryCh.toUpperCase();
+                showToast(label, next.friendlyName + (nextMic ? `\nMic → ${nextMic.friendlyName}` : ''));
                 await this.refreshDisplay(context);
             } else {
                 $websocket.showAlert(context);
@@ -351,9 +483,9 @@ const $plugin = {
             // Round to 4 decimal places to avoid floating-point noise in the URL
             const newVol = Math.round(Math.min(1, Math.max(0, currentVol + ticks * step)) * 10000) / 10000;
 
-            const results = await Promise.allSettled(channels.map(ch =>
+            const results = await withOverlay(baseUrl, () => Promise.allSettled(channels.map(ch =>
                 sonarRequest(`${baseUrl}/volumeSettings/classic/${ch}/Volume/${newVol}`, 'PUT')
-            ));
+            )));
             results.forEach((r, i) => {
                 if (r.status === 'rejected') console.error(`[Sonar] PUT volume ${channels[i]} threw:`, r.reason?.message);
                 else if (!r.value?.ok) console.error(`[Sonar] PUT volume ${channels[i]} failed: HTTP ${r.value?.status}`);
@@ -361,7 +493,7 @@ const $plugin = {
             if (results.some(r => r.status === 'fulfilled' && r.value?.ok)) {
                 this._state[context].volume = newVol;
                 const label = this._getLabel(settings);
-                sendImage(context, makeVolumeImage(label, Math.round(newVol * 100), currentMuted));
+                sendImage(context, await makeVolumeImage(primaryCh, label, Math.round(newVol * 100), currentMuted));
                 $websocket.setTitle(context, '');
             }
         },
@@ -375,9 +507,9 @@ const $plugin = {
             const currentVol = this._state[context]?.volume ?? 0.5;
             const newMuted = !(this._state[context]?.muted ?? false);
 
-            const muteResults = await Promise.allSettled(channels.map(ch =>
+            const muteResults = await withOverlay(baseUrl, () => Promise.allSettled(channels.map(ch =>
                 sonarRequest(`${baseUrl}/volumeSettings/classic/${ch}/Mute/${newMuted}`, 'PUT')
-            ));
+            )));
             muteResults.forEach((r, i) => {
                 if (r.status === 'rejected') console.error(`[Sonar] PUT mute ${channels[i]} threw:`, r.reason?.message);
                 else if (!r.value?.ok) console.error(`[Sonar] PUT mute ${channels[i]} failed: HTTP ${r.value?.status}`);
@@ -385,7 +517,8 @@ const $plugin = {
             if (muteResults.some(r => r.status === 'fulfilled' && r.value?.ok)) {
                 this._state[context].muted = newMuted;
                 const label = this._getLabel(settings);
-                sendImage(context, makeVolumeImage(label, Math.round(currentVol * 100), newMuted));
+                showToast(label, newMuted ? 'Muted' : `Unmuted — ${Math.round(currentVol * 100)}%`);
+                sendImage(context, await makeVolumeImage(channels[0], label, Math.round(currentVol * 100), newMuted));
                 $websocket.setTitle(context, '');
             }
         },
@@ -394,9 +527,10 @@ const $plugin = {
             const settings = this.data[context] || {};
             const channels = this._getChannels(settings);
             const label = this._getLabel(settings);
+            const primaryCh = channels[0];
             const baseUrl = await getSonarBaseUrl();
             if (!baseUrl) {
-                sendImage(context, makeVolumeImage(label, 0, false));
+                sendImage(context, await makeVolumeImage(primaryCh, label, 0, false));
                 $websocket.setTitle(context, '');
                 return;
             }
@@ -406,7 +540,6 @@ const $plugin = {
                 const data = await resp.json();
 
                 // master lives under data.masters.classic; others under data.devices.{ch}.classic
-                const primaryCh = channels[0];
                 const ch = primaryCh === 'master'
                     ? data?.masters?.classic
                     : data?.devices?.[primaryCh]?.classic;
@@ -416,13 +549,13 @@ const $plugin = {
                 this._state[context].volume = vol;
                 this._state[context].muted = muted;
 
-                sendImage(context, makeVolumeImage(label, Math.round(vol * 100), muted));
+                sendImage(context, await makeVolumeImage(primaryCh, label, Math.round(vol * 100), muted));
                 $websocket.setTitle(context, '');
             } catch (e) {
                 if (e.message?.includes('ECONNREFUSED') || e.message?.includes('fetch')) {
                     _sonarBaseUrl = null;
                 }
-                sendImage(context, makeVolumeImage(label, 0, false));
+                sendImage(context, await makeVolumeImage(primaryCh, label, 0, false));
                 $websocket.setTitle(context, '');
             }
         },
