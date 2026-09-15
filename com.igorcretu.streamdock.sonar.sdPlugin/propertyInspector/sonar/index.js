@@ -16,6 +16,7 @@ const $propEvent = {
     didReceiveSettings(data) {
         _currentSettings = data?.settings || {};
         restoreChannels(_currentSettings);
+        document.getElementById('overlayEnabled').checked = _currentSettings.overlayEnabled !== false;
         // Request device list from plugin (socket is open at this point)
         $websocket.sendToPlugin({ event: 'getDevices' });
     },
@@ -42,6 +43,11 @@ document.querySelectorAll('.ch-btn').forEach(btn => {
         btn.classList.toggle('active');
         saveSettings();
     });
+});
+
+document.getElementById('overlayEnabled').addEventListener('change', e => {
+    _currentSettings.overlayEnabled = e.target.checked;
+    saveSettings();
 });
 
 // ── Device icon list ───────────────────────────────────────────────────
@@ -144,12 +150,42 @@ function renderDeviceList(devices) {
         thumb.addEventListener('click', () => fileInput.click());
         changeLabel.addEventListener('click', () => fileInput.click());
 
-        row.appendChild(thumb);
-        row.appendChild(name);
-        row.appendChild(changeLabel);
-        row.appendChild(resetLabel);
-        row.appendChild(excludeToggle);
-        row.appendChild(fileInput);
+        const main = document.createElement('div');
+        main.className = 'device-row-main';
+        main.appendChild(thumb);
+        main.appendChild(name);
+        main.appendChild(changeLabel);
+        main.appendChild(resetLabel);
+        main.appendChild(excludeToggle);
+        main.appendChild(fileInput);
+        row.appendChild(main);
+
+        // Device type — drives the icon shown on the overlay notification (and the
+        // key art, when no custom icon is set). "Auto" falls back to a name-based guess.
+        const typeRow = document.createElement('div');
+        typeRow.className = 'device-type-row';
+        const typeLabel = document.createElement('label');
+        typeLabel.textContent = 'Type:';
+        const typeSelect = document.createElement('select');
+        typeSelect.className = 'device-type-select';
+        [['', 'Auto'], ['headphones', 'Headphones'], ['speaker', 'Speaker'], ['laptop', 'Laptop'], ['display', 'Display']]
+            .forEach(([value, text]) => {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = text;
+                typeSelect.appendChild(opt);
+            });
+        typeSelect.value = (_currentSettings.deviceTypes || {})[dev.id] || '';
+        typeSelect.addEventListener('change', () => {
+            if (!_currentSettings.deviceTypes) _currentSettings.deviceTypes = {};
+            if (typeSelect.value) _currentSettings.deviceTypes[dev.id] = typeSelect.value;
+            else delete _currentSettings.deviceTypes[dev.id];
+            saveSettings();
+        });
+        typeRow.appendChild(typeLabel);
+        typeRow.appendChild(typeSelect);
+        row.appendChild(typeRow);
+
         list.appendChild(row);
     });
 }

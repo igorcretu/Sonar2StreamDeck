@@ -9,6 +9,7 @@ const $local = false, $back = false,
                 btn.classList.toggle('active', channels.includes(btn.dataset.ch));
             });
             if (s.step != null) document.getElementById('step').value = s.step;
+            document.getElementById('overlayEnabled').checked = s.overlayEnabled !== false;
         },
         sendToPropertyInspector(data) {},
         didReceiveGlobalSettings(data) {},
@@ -22,6 +23,7 @@ function saveSettings() {
         channels,
         channel: channels[0],
         step: Number(document.getElementById('step').value) || 3,
+        overlayEnabled: document.getElementById('overlayEnabled').checked,
     });
 }
 
@@ -32,3 +34,4 @@ document.querySelectorAll('.ch-btn').forEach(btn => {
     });
 });
 document.getElementById('step').addEventListener('change', saveSettings);
+document.getElementById('overlayEnabled').addEventListener('change', saveSettings);

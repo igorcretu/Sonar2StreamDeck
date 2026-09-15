@@ -12,9 +12,10 @@
     }
     .ch-btn.active { background:#2563eb; color:#fff; border-color:#1d4ed8; }
 
-    .device-row { display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px solid #1e293b; }
+    .device-row { padding:6px 0; border-bottom:1px solid #1e293b; }
     .device-row:last-child { border-bottom:none; }
     .device-row.excluded { opacity:0.45; }
+    .device-row-main { display:flex; align-items:center; gap:8px; }
     .device-thumb {
       width:40px; height:40px; flex-shrink:0;
       background:#111; border:1px solid #334155; overflow:hidden; cursor:pointer;
@@ -29,6 +30,12 @@
       border:1px solid #334155; border-radius:3px; padding:2px 6px;
     }
     .device-exclude-toggle.is-excluded { color:#f87171; border-color:#7f1d1d; }
+    .device-type-row { display:flex; align-items:center; gap:6px; margin:5px 0 0 48px; }
+    .device-type-row label { font-size:10px; color:#64748b; }
+    .device-type-select {
+      font-size:11px; background:#1e293b; color:#cbd5e1; border:1px solid #334155;
+      border-radius:3px; padding:2px 4px;
+    }
     #deviceIconList { min-height:20px; }
     #loadingMsg { color:#475569; font-size:11px; padding:4px 0; }
   </style>
@@ -45,6 +52,14 @@
           <button class="ch-btn" data-ch="media">Media</button>
           <button class="ch-btn" data-ch="aux">Aux</button>
         </div>
+      </div>
+    </div>
+
+    <div class="sdpi-item" type="checkbox">
+      <div class="sdpi-item-label">Overlay</div>
+      <div class="sdpi-item-value">
+        <input type="checkbox" id="overlayEnabled" checked>
+        <label for="overlayEnabled"><span></span>Show notification on device change</label>
       </div>
     </div>
 

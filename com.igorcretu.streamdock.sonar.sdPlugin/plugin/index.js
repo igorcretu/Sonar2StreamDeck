@@ -99,34 +99,51 @@ function sonarRequest(url, method) {
     });
 }
 
-// ── Toast notification helper ──────────────────────────────────────────
-// GG's native overlay is only triggered by authenticated WebSocket messages
-// from Sonar itself. As a fallback we use Windows toast notifications.
-function showToast(title, message) {
+// ── Overlay notification (own window, not Sonar's) ─────────────────────
+// GG's native overlay is triggered by in-process Electron IPC internal to
+// SteelSeries GG — unreachable from outside, hardware shortcuts included
+// only because GG's own hotkey handler lives in that same process. Instead
+// we drive our own always-on-top card via overlay/overlay-host.ps1, a small
+// persistent WPF window. This plugin runs in a browser-like webview (unlike
+// the Node.js-process Legion plugin), so it's reached over plain local HTTP
+// — the same way sonarRequest() already talks to Sonar's own local API —
+// rather than a named pipe, which isn't reachable from here at all.
+const OVERLAY_PORT = 58471;
+
+function getOverlayLauncherUrl() {
     try {
-        const { execFile } = require('child_process');
-        const ps = `
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
-$template = [Windows.UI.Notifications.ToastTemplateType]::ToastText02
-$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent($template)
-$nodes = $xml.GetElementsByTagName('text')
-$nodes.Item(0).AppendChild($xml.CreateTextNode('${title.replace(/'/g, '')}')) | Out-Null
-$nodes.Item(1).AppendChild($xml.CreateTextNode('${message.replace(/'/g, '')}')) | Out-Null
-$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
-$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('SteelSeries Sonar')
-$notifier.Show($toast)
-`;
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps],
-            { timeout: 5000 }, () => {});
-    } catch (e) { /* toast not critical */ }
+        return new URL('../overlay/start-overlay-host.bat', document.location.href).href;
+    } catch (e) {
+        return null;
+    }
 }
 
-// withOverlay: kept as a no-op wrapper so callers don't need updating.
-// The native GG overlay fires internally only for hardware shortcuts;
-// toast notifications above handle the user-facing feedback instead.
-async function withOverlay(_baseUrl, fn) {
-    return fn();
+function sendOverlayRaw(payload) {
+    const params = new URLSearchParams();
+    for (const [k, v] of Object.entries(payload)) {
+        if (v !== undefined && v !== null) params.set(k, String(v));
+    }
+    return fetch(`http://127.0.0.1:${OVERLAY_PORT}/show?${params.toString()}`, { signal: AbortSignal.timeout(800) })
+        .then(r => r.ok)
+        .catch(() => false);
+}
+
+let _lastOverlaySpawnAttempt = 0;
+
+async function showOverlay(payload) {
+    const ok = await sendOverlayRaw(payload);
+    if (ok) return;
+
+    // Host not running (first use this session, or it crashed) — relaunch it via
+    // $websocket.openUrl (StreamDock ShellExecutes it, same as SteelSeriesGGEZ.exe
+    // above; this webview has no child_process access) and retry shortly after.
+    const now = Date.now();
+    if (now - _lastOverlaySpawnAttempt > 5000) {
+        _lastOverlaySpawnAttempt = now;
+        const launcherUrl = getOverlayLauncherUrl();
+        if (launcherUrl) $websocket.openUrl(launcherUrl);
+    }
+    setTimeout(() => sendOverlayRaw(payload), 1500);
 }
 
 // ── Canvas helpers ─────────────────────────────────────────────────────
@@ -174,7 +191,7 @@ function sendImage(context, dataUrl) {
     }));
 }
 
-async function makeDeviceImage(channelKey, channelLabel, deviceName, isOff, iconDataUrl) {
+async function makeDeviceImage(channelKey, channelLabel, deviceType, isOff, iconDataUrl) {
     const canvas = document.createElement('canvas');
     canvas.width = 144; canvas.height = 144;
     const ctx = canvas.getContext('2d');
@@ -199,8 +216,8 @@ async function makeDeviceImage(channelKey, channelLabel, deviceName, isOff, icon
     }
 
     // Custom icons are full-button images – draw at full size.
-    // Guessed built-in icons are small glyphs – center them.
-    const src = iconDataUrl || guessDeviceIconPath(deviceName);
+    // Guessed/classified built-in icons are small glyphs – center them.
+    const src = iconDataUrl || `icons/${deviceType || 'speaker'}.png`;
     await new Promise(resolve => {
         const img = new Image();
         img.onload = () => {
@@ -290,12 +307,16 @@ async function makeVolumeImage(channelKey, channelLabel, volumePct, muted) {
 
 // ── Shared helpers ─────────────────────────────────────────────────────
 
-function guessDeviceIconPath(name) {
+// One of 'headphones' | 'laptop' | 'display' | 'speaker' — also the exact
+// vector icon names the overlay host draws (overlay/overlay-host.ps1 Set-Icon).
+const DEVICE_TYPES = ['headphones', 'laptop', 'display', 'speaker'];
+
+function guessDeviceType(name) {
     const n = (name || '').toLowerCase();
-    if (/headset|headphone|arctis|nova|steelseries/.test(n)) return 'icons/headphones.png';
-    if (/realtek|integrated|built.?in|laptop/.test(n)) return 'icons/laptop.png';
-    if (/hdmi|displayport|monitor/.test(n)) return 'icons/display.png';
-    return 'icons/speaker.png';
+    if (/headset|headphone|arctis|nova|steelseries/.test(n)) return 'headphones';
+    if (/realtek|integrated|built.?in|laptop/.test(n)) return 'laptop';
+    if (/hdmi|displayport|monitor/.test(n)) return 'display';
+    return 'speaker';
 }
 
 function cleanName(name) {
@@ -315,7 +336,7 @@ const $plugin = {
 
     // ── Game output device cycler ──────────────────────────────────────
     game: new Action({
-        default: { channels: ['game'], excludedDeviceIds: [] },
+        default: { channels: ['game'], excludedDeviceIds: [], overlayEnabled: true, deviceTypes: {} },
         _state: {},
 
         async _willAppear({ context }) {
@@ -393,7 +414,9 @@ const $plugin = {
                 };
 
                 const iconDataUrl = settings.deviceIcons?.[currentId];
-                sendImage(context, await makeDeviceImage(primaryCh, label, '', false, iconDataUrl));
+                const currentDevice = realOutputs.find(d => d.id === currentId);
+                const deviceType = settings.deviceTypes?.[currentId] || guessDeviceType(currentDevice?.friendlyName);
+                sendImage(context, await makeDeviceImage(primaryCh, label, deviceType, false, iconDataUrl));
                 $websocket.setTitle(context, '');
             } catch (e) {
                 _sonarBaseUrl = null; // always re-discover on any failure
@@ -428,13 +451,22 @@ const $plugin = {
                 puts.push(sonarRequest(`${baseUrl}/classicRedirections/mic/deviceId/${nextMic.id}`, 'PUT'));
             }
 
-            const results = await withOverlay(baseUrl, () => Promise.allSettled(puts));
+            const results = await Promise.allSettled(puts);
             const anyOk = results.some(r => r.status === 'fulfilled' && r.value?.ok);
             if (anyOk) {
                 this._state[context].currentDeviceId = next.id;
                 if (nextMic) this._state[context].currentMicDeviceId = nextMic.id;
-                const label = settings.label || primaryCh.toUpperCase();
-                showToast(label, next.friendlyName + (nextMic ? `\nMic → ${nextMic.friendlyName}` : ''));
+                if (settings.overlayEnabled !== false) {
+                    const deviceType = settings.deviceTypes?.[next.id] || guessDeviceType(next.friendlyName);
+                    showOverlay({
+                        kind: 'device',
+                        label: `${CHANNEL_LABELS[primaryCh] || primaryCh} Device`,
+                        deviceName: next.friendlyName,
+                        micName: nextMic ? nextMic.friendlyName : undefined,
+                        icon: deviceType,
+                        color: CHANNEL_COLORS[primaryCh] || '#3b82f6',
+                    });
+                }
                 await this.refreshDisplay(context);
             } else {
                 $websocket.showAlert(context);
@@ -444,7 +476,7 @@ const $plugin = {
 
     // ── Channel volume dial ────────────────────────────────────────────
     volume: new Action({
-        default: { channel: 'game', step: 3 },
+        default: { channel: 'game', step: 3, overlayEnabled: true },
         _state: {},
 
         async _willAppear({ context }) {
@@ -483,9 +515,9 @@ const $plugin = {
             // Round to 4 decimal places to avoid floating-point noise in the URL
             const newVol = Math.round(Math.min(1, Math.max(0, currentVol + ticks * step)) * 10000) / 10000;
 
-            const results = await withOverlay(baseUrl, () => Promise.allSettled(channels.map(ch =>
+            const results = await Promise.allSettled(channels.map(ch =>
                 sonarRequest(`${baseUrl}/volumeSettings/classic/${ch}/Volume/${newVol}`, 'PUT')
-            )));
+            ));
             results.forEach((r, i) => {
                 if (r.status === 'rejected') console.error(`[Sonar] PUT volume ${channels[i]} threw:`, r.reason?.message);
                 else if (!r.value?.ok) console.error(`[Sonar] PUT volume ${channels[i]} failed: HTTP ${r.value?.status}`);
@@ -495,6 +527,15 @@ const $plugin = {
                 const label = this._getLabel(settings);
                 sendImage(context, await makeVolumeImage(primaryCh, label, Math.round(newVol * 100), currentMuted));
                 $websocket.setTitle(context, '');
+                if (settings.overlayEnabled !== false) {
+                    showOverlay({
+                        kind: 'volume',
+                        label,
+                        value: Math.round(newVol * 100),
+                        muted: currentMuted,
+                        color: CHANNEL_COLORS[primaryCh] || '#3b82f6',
+                    });
+                }
             }
         },
 
@@ -507,9 +548,9 @@ const $plugin = {
             const currentVol = this._state[context]?.volume ?? 0.5;
             const newMuted = !(this._state[context]?.muted ?? false);
 
-            const muteResults = await withOverlay(baseUrl, () => Promise.allSettled(channels.map(ch =>
+            const muteResults = await Promise.allSettled(channels.map(ch =>
                 sonarRequest(`${baseUrl}/volumeSettings/classic/${ch}/Mute/${newMuted}`, 'PUT')
-            )));
+            ));
             muteResults.forEach((r, i) => {
                 if (r.status === 'rejected') console.error(`[Sonar] PUT mute ${channels[i]} threw:`, r.reason?.message);
                 else if (!r.value?.ok) console.error(`[Sonar] PUT mute ${channels[i]} failed: HTTP ${r.value?.status}`);
@@ -517,9 +558,17 @@ const $plugin = {
             if (muteResults.some(r => r.status === 'fulfilled' && r.value?.ok)) {
                 this._state[context].muted = newMuted;
                 const label = this._getLabel(settings);
-                showToast(label, newMuted ? 'Muted' : `Unmuted — ${Math.round(currentVol * 100)}%`);
                 sendImage(context, await makeVolumeImage(channels[0], label, Math.round(currentVol * 100), newMuted));
                 $websocket.setTitle(context, '');
+                if (settings.overlayEnabled !== false) {
+                    showOverlay({
+                        kind: 'volume',
+                        label,
+                        value: Math.round(currentVol * 100),
+                        muted: newMuted,
+                        color: CHANNEL_COLORS[channels[0]] || '#3b82f6',
+                    });
+                }
             }
         },
 
