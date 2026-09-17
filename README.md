@@ -1,8 +1,20 @@
-# 🎧 Sonar2StreamDeck
+<p align="center">
+  <img src="docs/logo.png" width="120" alt="Sonar2StreamDeck logo" />
+</p>
 
-Control [SteelSeries Sonar](https://steelseries.com/gg/sonar) straight from your dock — no more alt-tabbing into GG to swap your output device or nudge a channel's volume. Press a button, turn a dial, done.
+<h1 align="center">Sonar2StreamDeck</h1>
+
+<p align="center">
+  Control <a href="https://steelseries.com/gg/sonar">SteelSeries Sonar</a> straight from your dock — no more alt-tabbing into GG to swap your output device or nudge a channel's volume. Press a button, turn a dial, done.
+</p>
 
 A plugin for [StreamDock](https://www.hotspottek.com/) (Ajazz/Mirabox) that talks to Sonar's local API directly, with a couple of details that make it actually pleasant to live with day to day: real device names instead of guesses, custom icons per device, a proper on-screen notification when something changes, and the ability to hide the devices you never use from the rotation.
+
+<p align="center">
+  <img src="docs/screenshot.png" width="700" alt="Sonar2StreamDeck keys and property inspector in StreamDock" />
+  <br/>
+  <sub>Volume dials, device cycler, and the property inspector — including the notification toggle</sub>
+</p>
 
 ---
 
@@ -79,6 +91,14 @@ The plugin talks to Sonar's local HTTP API, discovered at startup via SteelSerie
 Key art — the volume arc, the device icons, the offline state — is composited live on an HTML canvas and pushed to the key as an image, so what you see always reflects real device names, real icons, and the real current volume rather than a static asset.
 
 **Why a custom notification card instead of Sonar's own overlay:** Sonar's native pop-up is wired through Electron IPC internal to the SteelSeries GG process — it's not exposed over Sonar's local API at all, hardware shortcuts included only because GG's own hotkey handling lives in that same process. So the plugin drives its own: `overlay/overlay-host.ps1` is a small persistent WPF window, started lazily on first use (no admin rights needed) and reused for the rest of the session. The plugin reaches it over a local HTTP port rather than a named pipe, since — same as the Sonar API calls above — the plugin runs in a webview with no `child_process`/`net` access, only `fetch()`.
+
+---
+
+## Known limitation: the notification card won't show over some fullscreen games
+
+Windows renders true **exclusive fullscreen** by handing the display output directly to the game, bypassing the desktop compositor (DWM) entirely — so no ordinary always-on-top window can render over it. This isn't specific to this plugin: Windows' own volume/battery pop-ups, Xbox Game Bar, and most third-party overlays hit the same wall for the same reason. (Discord, Steam, and Sonar's own native overlay work around it by hooking directly into the game's graphics pipeline — a different, much heavier-weight technique this plugin deliberately doesn't do.)
+
+The fix that works for the vast majority of games: right-click the game's `.exe` (or its shortcut) → **Properties → Compatibility** → make sure **"Disable fullscreen optimizations"** is **unchecked**. Most modern games run this way by default, which keeps DWM in the loop and lets the notification card (and every other overlay) render normally. If the game offers a **Borderless** or **Windowed Fullscreen** display mode, that works too, and sidesteps the question entirely.
 
 ---
 
